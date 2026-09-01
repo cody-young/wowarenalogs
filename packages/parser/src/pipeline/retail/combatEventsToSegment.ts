@@ -4,7 +4,7 @@ import { ArenaMatchEnd } from '../../actions/ArenaMatchEnd';
 import { ArenaMatchStart } from '../../actions/ArenaMatchStart';
 import { ZoneChange } from '../../actions/ZoneChange';
 import { IActivityStarted } from '../../CombatData';
-import { logDebug, logTrace } from '../../logger';
+import { logDebug, logInfo, logTrace } from '../../logger';
 import { CombatEvent, ICombatEventSegment } from '../../types';
 
 const COMBAT_AUTO_TIMEOUT_SECS = 60;
@@ -78,6 +78,9 @@ export const combatEventsToSegment = () => {
           if (!currentBuffer.hasEmittedStartEvent) {
             if (event instanceof ArenaMatchStart) {
               logTrace(`combatEventsToSegment.!emitStart|ARENAMATCHSTART isStart=${event instanceof ArenaMatchStart}`);
+              logInfo(
+                `[combatEventsToSegment] Arena match starting: bracket=${event.bracket} zone=${event.zoneId} ranked=${event.isRanked}`,
+              );
               output.next({
                 dataType: 'ActivityStarted',
                 arenaMatchStartInfo: event,
@@ -101,6 +104,9 @@ export const combatEventsToSegment = () => {
 
           if (event instanceof ArenaMatchEnd) {
             logTrace('combatEventsToSegment.ArenaMatchEnd');
+            logInfo(
+              `[combatEventsToSegment] Arena match ended: winner=${event.winningTeamId} duration=${event.matchDurationInSeconds}s`,
+            );
             emitCurrentBuffer();
           }
 

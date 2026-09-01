@@ -146,7 +146,8 @@ export class LogsModule extends NativeBridgeModule {
           });
 
           data.filePaths.forEach((logFile) => {
-            DesktopUtils.parseLogFile(logParser, logFile);
+            const parseOK = DesktopUtils.parseLogFile(logParser, logFile);
+            logger.info(`importLogFiles ${logFile} parseOK=${parseOK}`);
           });
         }
       });
@@ -172,23 +173,38 @@ export class LogsModule extends NativeBridgeModule {
     if (!logsExist) {
       mkdirSync(wowLogsDirectoryFullPath);
     }
+    // Logged here rather than inside the handleXXX methods: @moduleEvent replaces those
+    // bodies entirely with an IPC send, so logging inside them would never run. This is the
+    // only place in the main process that sees every parser lifecycle event.
     bridge.logParser.on('activity_started', (event) => {
+      logger.info(`[${wowVersion}] activity_started bracket=${event.arenaMatchStartInfo?.bracket ?? 'unknown'}`);
       this.handleActivityStarted(mainWindow, event);
     });
     bridge.logParser.on('arena_match_ended', (combat) => {
+      logger.info(`[${wowVersion}] arena_match_ended id=${combat.id}`);
       this.handleNewCombat(mainWindow, combat);
     });
     bridge.logParser.on('solo_shuffle_round_ended', (combat) => {
+      // endTime is the round-ending kill, so the gap is how long the round took to surface.
+      logger.info(
+        `[${wowVersion}] solo_shuffle_round_ended id=${combat.id} sequenceNumber=${combat.sequenceNumber} receiveLatencyMs=${Date.now() - combat.endTime}`,
+      );
       this.handleSoloShuffleRoundEnded(mainWindow, combat);
     });
     bridge.logParser.on('solo_shuffle_ended', (combat) => {
+      logger.info(`[${wowVersion}] solo_shuffle_ended id=${combat.id} rounds=${combat.rounds.length}`);
       this.handleSoloShuffleEnded(mainWindow, combat);
     });
-    bridge.logParser.on('battleground_ended', (data) => this.handleBattlegroundEnded(mainWindow, data));
+    bridge.logParser.on('battleground_ended', (data) => {
+      logger.info(`[${wowVersion}] battleground_ended id=${data.id}`);
+      this.handleBattlegroundEnded(mainWindow, data);
+    });
     bridge.logParser.on('malformed_arena_match_detected', (combat) => {
+      logger.info(`[${wowVersion}] malformed_arena_match_detected id=${combat.id}`);
       this.handleMalformedCombatDetected(mainWindow, combat);
     });
     bridge.logParser.on('parser_error', (error) => {
+      logger.error(`[${wowVersion}] parser_error: ${error.message}`);
       this.handleParserError(mainWindow, error);
     });
 
@@ -228,12 +244,20 @@ export class LogsModule extends NativeBridgeModule {
         // and size is larger than before
         fileSizeDelta >= 0
       ) {
+        logger.info(`[${wowVersion}] onChange ${path} continuation +${fileSizeDelta}b`);
         parseOK = DesktopUtils.parseLogFileChunk(bridge.logParser, path, lastKnownState.lastFileSize, fileSizeDelta);
       } else {
         // we are now reading a new combat log file, resetting states
+        logger.info(
+          `[${wowVersion}] onChange ${path} new-file-reset size=${stats?.size ?? 0} creationTimeDelta=${fileCreationTimeDelta}`,
+        );
         bridge.logParser.resetParserStates(wowVersion);
 
         parseOK = DesktopUtils.parseLogFileChunk(bridge.logParser, path, 0, stats?.size || 0);
+      }
+
+      if (!parseOK) {
+        logger.info(`[${wowVersion}] onChange ${path} parseLogFileChunk reported failure`);
       }
 
       if (parseOK) {
