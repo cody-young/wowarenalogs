@@ -15,6 +15,44 @@ import { nativeBridgeRegistry } from './nativeBridge/registry';
 // eslint-disable-next-line no-console
 console.log(process.versions);
 
+process.on('uncaughtException', (error) => {
+  logger.error(`Uncaught exception in main process: ${error.message}`);
+  if (error.stack) {
+    logger.error(error.stack);
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error(`Unhandled rejection in main process: ${String(reason)}`);
+});
+
+const MAX_RELOAD_DELAY_MS = 30000;
+let reloadAttempt = 0;
+let reloadTimer: NodeJS.Timeout | undefined;
+
+function loadRemoteApp(win: BrowserWindow) {
+  if (reloadTimer) {
+    clearTimeout(reloadTimer);
+    reloadTimer = undefined;
+  }
+  if (win.isDestroyed()) {
+    return;
+  }
+  win.loadURL(`${BASE_REMOTE_URL}/?time=${moment.now()}`, {
+    extraHeaders: 'pragma: no-cache\n',
+  });
+}
+
+function scheduleReload(win: BrowserWindow) {
+  if (reloadTimer) {
+    return;
+  }
+  reloadAttempt += 1;
+  const delay = Math.min(1000 * 2 ** reloadAttempt, MAX_RELOAD_DELAY_MS);
+  logger.info(`Scheduling app reload attempt ${reloadAttempt} in ${delay}ms`);
+  reloadTimer = setTimeout(() => loadRemoteApp(win), delay);
+}
+
 function createWindow() {
   const preloadScriptPath = path.join(__dirname, 'preload.bundle.js');
 
@@ -37,12 +75,37 @@ function createWindow() {
   win.setMinimumSize(1120, 600);
   win.setMenuBarVisibility(false);
 
-  win.loadURL(`${BASE_REMOTE_URL}/?time=${moment.now()}`, {
-    extraHeaders: 'pragma: no-cache\n',
-  });
+  loadRemoteApp(win);
 
   win.webContents.setWindowOpenHandler(() => {
     return { action: 'deny' };
+  });
+
+  win.webContents.on('did-finish-load', () => {
+    if (win.webContents.getURL().startsWith(BASE_REMOTE_URL)) {
+      reloadAttempt = 0;
+    }
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // -3 is ERR_ABORTED, which fires for routine navigations (e.g. a load getting
+    // superseded by another) and is not a real failure.
+    if (!isMainFrame || errorCode === -3) {
+      return;
+    }
+    logger.error(`Renderer failed to load ${validatedURL}: ${errorDescription} (${errorCode})`);
+    if (!validatedURL.startsWith(BASE_REMOTE_URL)) {
+      return;
+    }
+    win.loadFile(path.join(__dirname, 'public', 'connection-error.html')).catch((e) => {
+      logger.error(`Failed to load fallback error page: ${String(e)}`);
+    });
+    scheduleReload(win);
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logger.error(`Renderer process gone: reason=${details.reason} exitCode=${details.exitCode}`);
+    scheduleReload(win);
   });
 
   win.webContents.on('did-frame-finish-load', () => {
