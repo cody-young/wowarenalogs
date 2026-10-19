@@ -160,6 +160,10 @@ const logCombatAnalyticsAsync = async (combat: AtomicArenaCombat) => {
 
 let currentActivity: IActivityStarted | null = null;
 
+// Re-importing a log file replays matches already in the list
+const addCombat = (prev: AtomicArenaCombat[], combat: AtomicArenaCombat) =>
+  prev.some((c) => c.id === combat.id) ? prev : prev.concat([combat]);
+
 export const LocalCombatsContextProvider = (props: IProps) => {
   const [combats, setCombats] = useState<AtomicArenaCombat[]>([]);
   const auth = useAuth();
@@ -251,17 +255,13 @@ export const LocalCombatsContextProvider = (props: IProps) => {
               }
             });
 
-          setCombats((prev) => {
-            return prev.concat([combat]);
-          });
+          setCombats((prev) => addCombat(prev, combat));
         }
       });
 
       window.wowarenalogs.logs?.handleSoloShuffleRoundEnded((_event, combat) => {
         if (wowVersion === combat.wowVersion) {
-          setCombats((prev) => {
-            return prev.concat([combat]);
-          });
+          setCombats((prev) => addCombat(prev, combat));
         }
       });
 

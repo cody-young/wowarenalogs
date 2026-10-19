@@ -9,9 +9,12 @@ import _ from 'lodash';
 import { useMemo } from 'react';
 import { TbLoader } from 'react-icons/tb';
 
+import { useLocalCombats } from '../../../hooks/LocalCombatsContext';
+
 export default function HistoryPage() {
   const { isLoadingAuthData, isAuthenticated } = useAuth();
   const matchesQuery = useGetMyMatchesQuery();
+  const { localCombats } = useLocalCombats();
 
   const hybridCombats = useMemo(() => {
     if (isLoadingAuthData) {
@@ -19,16 +22,27 @@ export default function HistoryPage() {
     }
 
     const remoteCombats = matchesQuery.data?.myMatches?.combats || [];
+    const remoteIds = new Set(remoteCombats.map((c) => c.id));
+    // Dev servers have no uploads, so list matches parsed from disk this session too
+    const unsyncedLocalCombats =
+      process.env.NODE_ENV === 'development' ? localCombats.filter((c) => !remoteIds.has(c.id)) : [];
     return _.orderBy(
-      remoteCombats.map((c) => ({
-        isLocal: false,
-        isShuffle: c.__typename === 'ShuffleRoundStub',
-        match: c,
-      })) as LocalRemoteHybridCombat[],
+      [
+        ...remoteCombats.map((c) => ({
+          isLocal: false,
+          isShuffle: c.__typename === 'ShuffleRoundStub',
+          match: c,
+        })),
+        ...unsyncedLocalCombats.map((c) => ({
+          isLocal: true,
+          isShuffle: c.dataType === 'ShuffleRound',
+          match: c,
+        })),
+      ] as LocalRemoteHybridCombat[],
       (c) => c.match.startTime,
       ['desc'],
     );
-  }, [matchesQuery.data, isLoadingAuthData]);
+  }, [matchesQuery.data, isLoadingAuthData, localCombats]);
 
   if (isLoadingAuthData) {
     return <LoadingScreen />;
